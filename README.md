@@ -1,4 +1,4 @@
-# FusionSolar Charger – Home Assistant Integration
+# FusionSolar App – Home Assistant Integration
 # **THIS IS A WORK IN PROGRESS, DO NOT USE**
 ## 📌 Overview
 
