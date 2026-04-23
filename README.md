@@ -1,5 +1,5 @@
 # FusionSolar Charger – Home Assistant Integration
-
+# **THIS IS A WORK IN PROGRESS, DO NOT USE**
 ## 📌 Overview
 
 **FusionSolar Charger** is a custom integration for Home Assistant that connects to Huawei FusionSolar systems and exposes charger-related data and controls within your smart home environment.
