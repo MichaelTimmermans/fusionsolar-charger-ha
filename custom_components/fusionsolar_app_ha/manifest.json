@@ -1,12 +1,12 @@
 {
-  "domain": "fusionsolar_charger",
-  "name": "FusionSolar Charger",
+  "domain": "fusionsolar_app_ha",
+  "name": "FusionSolar App",
   "version": "1.0.0",
   "config_flow": true,
-  "documentation": "https://github.com/your-repo/fusionsolar-charger-ha",
-  "issue_tracker": "https://github.com/your-repo/fusionsolar-charger-ha/issues",
+  "documentation": "https://github.com/MichaelTimmermans/fusionsolar-app-ha",
+  "issue_tracker": "https://github.com/MichaelTimmermans/fusionsolar-app-ha/issues",
   "dependencies": [],
-  "codeowners": ["@your-github-username"],
+  "codeowners": ["@MichaelTimmermans"],
   "requirements": [],
   "iot_class": "cloud_polling"
 }

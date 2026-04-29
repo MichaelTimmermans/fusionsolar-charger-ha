@@ -1,22 +1,8 @@
-"""
-Sensor platform for FusionSolar Charger.
-
-Exposes:
-  - Charger status (text)
-  - Charging power (W)
-  - Session energy (kWh)
-  - Charging current (A)
-  - Charging voltage (V)
-  - Total energy delivered (kWh, lifetime)
-
-Signal IDs are from the FusionSolar northbound API for EV chargers (mocType 60080/60081).
-Real signal names/IDs discovered from your C# WRITABLE_IDS and config signal lists.
-"""
+"""Sensor platform for FusionSolar App HA."""
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
 
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -26,96 +12,224 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     UnitOfElectricCurrent,
-    UnitOfElectricPotential,
     UnitOfEnergy,
     UnitOfPower,
+    UnitOfTime,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import CHARGER_STATUS_MAP, DOMAIN
-from .coordinator import FusionSolarCoordinator
+from .const import DOMAIN
+from .coordinator import ChargerCoordinator, StationCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Sensor descriptions
-# ---------------------------------------------------------------------------
-
 @dataclass(frozen=True, kw_only=True)
-class FusionSolarSensorDescription(SensorEntityDescription):
-    """Extends SensorEntityDescription with FusionSolar-specific fields."""
-    signal_id: int | None = None          # None = derived from charger_status
-    value_fn: Any = None                  # optional transform
+class FusionSensorDescription(SensorEntityDescription):
+    data_key: str = ""
 
 
-# Signal IDs for EV charger real-time data.
-# These IDs come from the FusionSolar homemgr API for charger devices.
-# Values confirmed from your C# code signal lists.
-SENSOR_DESCRIPTIONS: tuple[FusionSolarSensorDescription, ...] = (
-    FusionSolarSensorDescription(
-        key="charger_status",
-        name="Charger status",
+CHARGER_SENSORS: tuple[FusionSensorDescription, ...] = (
+    # ── Status ────────────────────────────────────────────────────────
+    FusionSensorDescription(
+        key="signal_status",
+        data_key="signal_status",
+        name="Status",
         icon="mdi:ev-station",
-        signal_id=None,        # read from charger_status, not signals
     ),
-    FusionSolarSensorDescription(
-        key="charging_power",
+    # ── Live charging ─────────────────────────────────────────────────
+    FusionSensorDescription(
+        key="charge_power",
+        data_key="charge_power",
         name="Charging power",
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfPower.WATT,
         icon="mdi:flash",
-        signal_id=20006,       # charging power signal
     ),
-    FusionSolarSensorDescription(
-        key="charging_current",
-        name="Charging current",
-        device_class=SensorDeviceClass.CURRENT,
+    FusionSensorDescription(
+        key="charging_duration",
+        data_key="charging_duration",
+        name="Charging duration",
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
-        icon="mdi:current-ac",
-        signal_id=20005,       # charging current signal
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        icon="mdi:timer",
     ),
-    FusionSolarSensorDescription(
-        key="charging_voltage",
-        name="Charging voltage",
-        device_class=SensorDeviceClass.VOLTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
-        icon="mdi:sine-wave",
-        signal_id=20004,       # charging voltage signal
-    ),
-    FusionSolarSensorDescription(
-        key="session_energy",
-        name="Session energy",
+    FusionSensorDescription(
+        key="session_target_energy",
+        data_key="session_target_energy",
+        name="Session target energy",
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.TOTAL_INCREASING,
+        state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         icon="mdi:battery-charging",
-        signal_id=20010,       # session energy (kWh)
     ),
-    FusionSolarSensorDescription(
-        key="total_energy",
+    # ── Lifetime totals ───────────────────────────────────────────────
+    FusionSensorDescription(
+        key="total_energy_kwh",
+        data_key="total_energy_kwh",
         name="Total energy delivered",
         device_class=SensorDeviceClass.ENERGY,
         state_class=SensorStateClass.TOTAL_INCREASING,
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         icon="mdi:counter",
-        signal_id=20011,       # lifetime total energy
+        # Source: signal 10036 (Wh) ÷ 1000 = kWh
+        # Confirmed value 8901 Wh = 8.901 kWh lifetime
     ),
-    FusionSolarSensorDescription(
+    # ── Settings (from gun dnId config-info) ──────────────────────────
+    FusionSensorDescription(
         key="max_current",
+        data_key="max_current",
         name="Max charging current",
         device_class=SensorDeviceClass.CURRENT,
         state_class=SensorStateClass.MEASUREMENT,
         native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
         icon="mdi:current-ac",
-        signal_id=20001,       # max current setting
+    ),
+    FusionSensorDescription(
+        key="working_mode",
+        data_key="working_mode",
+        name="Working mode",
+        icon="mdi:solar-power",
+    ),
+    FusionSensorDescription(
+        key="max_grid_power",
+        data_key="max_grid_power",
+        name="Max power from grid",
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        icon="mdi:transmission-tower-import",
+    ),
+    FusionSensorDescription(
+        key="surplus_power_start",
+        data_key="surplus_power_start",
+        name="PV surplus to start charging",
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        icon="mdi:solar-power-variant",
+    ),
+    FusionSensorDescription(
+        key="phase_switch",
+        data_key="phase_switch",
+        name="Phase switch",
+        icon="mdi:lightning-bolt-circle",
+    ),
+    FusionSensorDescription(
+        key="locking_mode",
+        data_key="locking_mode",
+        name="Connector locking mode",
+        icon="mdi:lock",
+    ),
+    # ── Settings (from parent dnId config-info) ───────────────────────
+    FusionSensorDescription(
+        key="max_power_limit",
+        data_key="max_power_limit",
+        name="Dynamic charging power limit",
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        icon="mdi:lightning-bolt-circle",
+    ),
+    FusionSensorDescription(
+        key="networking_mode",
+        data_key="networking_mode",
+        name="Networking mode",
+        icon="mdi:network",
+    ),
+    FusionSensorDescription(
+        key="charger_alias",
+        data_key="charger_alias",
+        name="Charger alias",
+        icon="mdi:tag",
+    ),
+    FusionSensorDescription(
+        key="wifi_signal",
+        data_key="wifi_signal",
+        name="WiFi signal",
+        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+        icon="mdi:wifi",
+    ),
+)
+
+
+STATION_SENSORS: tuple[FusionSensorDescription, ...] = (
+    FusionSensorDescription(
+        key="current_power", data_key="current_power", name="PV power",
+        device_class=SensorDeviceClass.POWER, state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfPower.KILO_WATT, icon="mdi:solar-power",
+    ),
+    FusionSensorDescription(
+        key="battery_power", data_key="battery_power", name="Battery power",
+        device_class=SensorDeviceClass.POWER, state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfPower.KILO_WATT, icon="mdi:battery-charging",
+    ),
+    FusionSensorDescription(
+        key="daily_energy", data_key="daily_energy", name="Energy today",
+        device_class=SensorDeviceClass.ENERGY, state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR, icon="mdi:solar-power-variant",
+    ),
+    FusionSensorDescription(
+        key="daily_on_grid", data_key="daily_on_grid", name="Grid export today",
+        device_class=SensorDeviceClass.ENERGY, state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR, icon="mdi:transmission-tower-export",
+    ),
+    FusionSensorDescription(
+        key="daily_buy", data_key="daily_buy", name="Grid import today",
+        device_class=SensorDeviceClass.ENERGY, state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR, icon="mdi:transmission-tower-import",
+    ),
+    FusionSensorDescription(
+        key="daily_use", data_key="daily_use", name="House consumption today",
+        device_class=SensorDeviceClass.ENERGY, state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR, icon="mdi:home-lightning-bolt",
+    ),
+    FusionSensorDescription(
+        key="daily_self_use", data_key="daily_self_use", name="Self-consumed today",
+        device_class=SensorDeviceClass.ENERGY, state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR, icon="mdi:home-battery",
+    ),
+    FusionSensorDescription(
+        key="month_energy", data_key="month_energy", name="Energy this month",
+        device_class=SensorDeviceClass.ENERGY, state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR, icon="mdi:calendar-month",
+    ),
+    FusionSensorDescription(
+        key="year_energy", data_key="year_energy", name="Energy this year",
+        device_class=SensorDeviceClass.ENERGY, state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR, icon="mdi:calendar",
+    ),
+    FusionSensorDescription(
+        key="cumulative_energy", data_key="cumulative_energy", name="Lifetime energy",
+        device_class=SensorDeviceClass.ENERGY, state_class=SensorStateClass.TOTAL_INCREASING,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR, icon="mdi:counter",
+    ),
+    FusionSensorDescription(
+        key="battery_capacity", data_key="battery_capacity", name="Battery capacity",
+        device_class=SensorDeviceClass.ENERGY_STORAGE, state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR, icon="mdi:battery",
+    ),
+    FusionSensorDescription(
+        key="plant_status", data_key="plant_status", name="Plant status",
+        icon="mdi:information-outline",
+    ),
+    FusionSensorDescription(
+        key="installed_capacity", data_key="installed_capacity", name="Installed capacity",
+        device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.KILO_WATT, icon="mdi:solar-panel-large",
+    ),
+    FusionSensorDescription(
+        key="eq_power_hours", data_key="eq_power_hours", name="Equivalent power hours today",
+        state_class=SensorStateClass.MEASUREMENT, native_unit_of_measurement="h",
+        icon="mdi:clock-outline",
     ),
 )
 
@@ -125,79 +239,52 @@ async def async_setup_entry(
     entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up FusionSolar Charger sensor entities."""
-    coordinator: FusionSolarCoordinator = hass.data[DOMAIN][entry.entry_id]
+    data = hass.data[DOMAIN][entry.entry_id]
+    charger_coordinator: ChargerCoordinator = data["charger"]
+    station_coordinator: StationCoordinator | None = data["station"]
 
-    async_add_entities(
-        FusionSolarSensor(coordinator, description)
-        for description in SENSOR_DESCRIPTIONS
-    )
+    entities: list[SensorEntity] = [
+        FusionSensor(charger_coordinator, desc, is_station=False)
+        for desc in CHARGER_SENSORS
+    ]
+    if station_coordinator is not None:
+        entities.extend(
+            FusionSensor(station_coordinator, desc, is_station=True)
+            for desc in STATION_SENSORS
+        )
+    async_add_entities(entities)
 
 
-# ---------------------------------------------------------------------------
-# Sensor entity
-# ---------------------------------------------------------------------------
-
-class FusionSolarSensor(CoordinatorEntity[FusionSolarCoordinator], SensorEntity):
-    """A sensor entity backed by the FusionSolar coordinator."""
-
-    entity_description: FusionSolarSensorDescription
+class FusionSensor(CoordinatorEntity, SensorEntity):
     _attr_has_entity_name = True
 
-    def __init__(
-        self,
-        coordinator: FusionSolarCoordinator,
-        description: FusionSolarSensorDescription,
-    ) -> None:
+    def __init__(self, coordinator, description: FusionSensorDescription, is_station: bool) -> None:
         super().__init__(coordinator)
         self.entity_description = description
-        self._attr_unique_id = f"{coordinator.dn_id}_{description.key}"
+        self._is_station = is_station
+        if is_station:
+            self._attr_unique_id = f"{coordinator.station_dn_id}_station_{description.key}"
+        else:
+            self._attr_unique_id = f"{coordinator.dn_id}_charger_{description.key}"
 
     @property
     def device_info(self) -> DeviceInfo:
+        if self._is_station:
+            return DeviceInfo(
+                identifiers={(DOMAIN, f"station_{self.coordinator.station_dn_id}")},
+                name=self.coordinator.station_name,
+                manufacturer="Huawei",
+                model="FusionSolar Solar Plant",
+            )
         return DeviceInfo(
-            identifiers={(DOMAIN, str(self.coordinator.dn_id))},
+            identifiers={(DOMAIN, f"charger_{self.coordinator.dn_id}")},
             name=self.coordinator.device_name,
             manufacturer="Huawei",
             model="FusionSolar EV Charger",
         )
 
     @property
-    def native_value(self) -> str | float | int | None:
-        """Return the sensor value from coordinator data."""
-        data = self.coordinator.data
-        if data is None:
+    def native_value(self):
+        if not self.coordinator.data:
             return None
-
-        desc = self.entity_description
-
-        # Charger status comes from the status endpoint, not signal IDs
-        if desc.key == "charger_status":
-            status = data.get("charger_status")
-            if status is None:
-                return None
-            return status.charge_status_label
-
-        # All other sensors come from real-time signal data
-        signal_id = desc.signal_id
-        if signal_id is None:
-            return None
-
-        signals = data.get("signals", {})
-        signal = signals.get(signal_id)
-        if signal is None:
-            return None
-
-        # Try numeric first (power, current, voltage, energy)
-        raw = signal.real_value or signal.value
-        if raw:
-            try:
-                return float(raw)
-            except (ValueError, TypeError):
-                pass
-
-        # Fall back to enum map lookup
-        if signal.enum_map and signal.value in signal.enum_map:
-            return signal.enum_map[signal.value]
-
-        return raw or None
+        return self.coordinator.data.get(self.entity_description.data_key)
