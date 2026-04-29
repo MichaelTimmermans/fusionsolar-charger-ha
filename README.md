@@ -2,15 +2,15 @@
 # **THIS IS A WORK IN PROGRESS, DO NOT USE**
 ## 📌 Overview
 
-**FusionSolar Charger** is a custom integration for Home Assistant that connects to Huawei FusionSolar systems and exposes charger-related data and controls within your smart home environment.
+**FusionSolar App** is a custom integration for Home Assistant that connects to Huawei FusionSolar systems and exposes App-related data and controls within your smart home environment.
 
-This integration allows you to monitor and manage your FusionSolar charger directly from Home Assistant, enabling automation, insights, and better energy management.
+This integration allows you to monitor and manage your FusionSolar App directly from Home Assistant, enabling automation, insights, and better energy management.
 
 ---
 
 ## ✨ Features
 
-* 🔌 Monitor charger status
+* 🔌 Monitor App status
 * ⚡ View real-time power and energy data
 * 📊 Integration with Home Assistant Energy Dashboard
 * 🔄 Automatic data updates via coordinator pattern
@@ -28,7 +28,7 @@ This integration allows you to monitor and manage your FusionSolar charger direc
 3. Click the three dots (top right) → **Custom repositories**
 4. Add this repository URL
 5. Select category: **Integration**
-6. Install **FusionSolar Charger**
+6. Install **FusionSolar App**
 7. Restart Home Assistant
 
 ---
@@ -40,7 +40,7 @@ This integration allows you to monitor and manage your FusionSolar charger direc
 2. Copy the folder:
 
    ```
-   custom_components/fusionsolar_charger/
+   custom_components/fusionsolar_app_ha/
    ```
 
    into your Home Assistant `custom_components` directory
@@ -53,7 +53,7 @@ This integration allows you to monitor and manage your FusionSolar charger direc
 
 1. Go to **Settings → Devices & Services**
 2. Click **Add Integration**
-3. Search for **FusionSolar Charger**
+3. Search for **FusionSolar App**
 4. Enter your FusionSolar credentials
 
 ---
@@ -67,7 +67,7 @@ This integration allows you to monitor and manage your FusionSolar charger direc
 
 ## 🧠 How It Works
 
-This integration connects to the FusionSolar cloud API and retrieves charger data at regular intervals. It uses Home Assistant’s DataUpdateCoordinator to efficiently manage updates and minimize API load.
+This integration connects to the FusionSolar cloud API and retrieves App data at regular intervals. It uses Home Assistant’s DataUpdateCoordinator to efficiently manage updates and minimize API load.
 
 ---
 
@@ -86,7 +86,7 @@ This integration connects to the FusionSolar cloud API and retrieves charger dat
 * Ensure files are in the correct directory:
 
   ```
-  custom_components/fusionsolar_charger/
+  custom_components/fusionsolar_app_ha/
   ```
 * Restart Home Assistant
 
@@ -102,7 +102,7 @@ This integration connects to the FusionSolar cloud API and retrieves charger dat
 ### Structure
 
 ```
-custom_components/fusionsolar_charger/
+custom_components/fusionsolar_app_ha/
 ├── __init__.py
 ├── manifest.json
 ├── config_flow.py
