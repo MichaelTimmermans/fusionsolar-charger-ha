@@ -1,3 +1,4 @@
+"""DataUpdateCoordinator for FusionSolar App HA."""
 from __future__ import annotations
 
 import logging
@@ -24,27 +25,6 @@ _LOGGER = logging.getLogger(__name__)
 class ChargerCoordinator(DataUpdateCoordinator):
     """
     Polls the EV charger every 30s.
-
-    data dict keys:
-      status_code           int   — chargeStatus integer
-      signal_status         str   — rich label from signal 2101519
-      charging_power        float — kW (from query-process-data)
-      charging_voltage      float — V
-      charging_current      float — A
-      session_energy        float — kWh (current session)
-      session_duration_str  str   — formatted duration (e.g. 1u32)
-      session_start_time    int   — epoch ms
-      total_energy_kwh      float — kWh lifetime (signal 10036 ÷ 1000)
-      max_current           float — A (signal 20003)
-      working_mode          str   — Normal/PV Preferred (signal 20002)
-      max_grid_power        float — kW (signal 20006)
-      surplus_power_start   float — kW (signal 20007)
-      phase_switch          str   — Enable/Disable (signal 20004)
-      locking_mode          str   — (signal 20005)
-      max_power_limit       float — kW (signal 20001 from parent)
-      networking_mode       str   — FE/WIFI (signal 20014)
-      charger_alias         str   — user name (signal 20015)
-      wifi_signal           float — dBm (signal 2101518)
     """
 
     def __init__(
@@ -88,24 +68,18 @@ class ChargerCoordinator(DataUpdateCoordinator):
 
             # ── 3. Live session data via query-process-data ───────────
             process = await self.api.get_charging_process_data(self.dn_id)
-            _LOGGER.debug("query-process-data response: %s", process)
-
-            # Extract nested 'value' from the JSON structure
+            
             charging_power   = _to_float_from_dict(process.get("chargingPower"))
             charging_voltage = _to_float_from_dict(process.get("chargingVoltage"))
             charging_current = _to_float_from_dict(process.get("chargingCurrent"))
             session_energy   = _to_float_from_dict(process.get("chargedEnergy"))
             
-            # Duration formatting: 92 -> 1u32
             raw_duration = _to_float_from_dict(process.get("chargedTime"))
             session_duration_str = "Unknown"
             if raw_duration is not None:
                 hours = int(raw_duration // 60)
                 minutes = int(raw_duration % 60)
-                if hours > 0:
-                    session_duration_str = f"{hours}u{minutes:02d}"
-                else:
-                    session_duration_str = f"{minutes}Min"
+                session_duration_str = f"{hours}u{minutes:02d}" if hours > 0 else f"{minutes}Min"
 
             session_start = process.get("startTime")
 
@@ -121,18 +95,28 @@ class ChargerCoordinator(DataUpdateCoordinator):
                     self.gun_dn_id, self._gun_signal_ids
                 )
 
-            working_mode        = gun_cfg.get(20002, {}).get("realValue", "")
+            # --- Verbeterde Working Mode Logica ---
+            mode_val = gun_cfg.get(20002, {}).get("value")
+            strategy_val = gun_cfg.get(20001, {}).get("value")
+            
+            if strategy_val == "1":
+                working_mode = "PV Preferred"
+            elif mode_val == "1":
+                working_mode = "Scheduled"
+            elif mode_val == "0":
+                working_mode = "Normal"
+            else:
+                working_mode = gun_cfg.get(20002, {}).get("realValue", "Unknown")
+
             max_current         = _sig_float(gun_cfg, 20003)
             phase_switch        = gun_cfg.get(20004, {}).get("realValue", "")
             locking_mode        = gun_cfg.get(20005, {}).get("realValue", "")
             max_grid_power      = _sig_float(gun_cfg, 20006)
             surplus_power_start = _sig_float(gun_cfg, 20007)
             total_energy_wh     = _sig_float(gun_cfg, 10036)
-            total_energy_kwh    = (
-                total_energy_wh / 1000.0 if total_energy_wh is not None else None
-            )
+            total_energy_kwh    = (total_energy_wh / 1000.0 if total_energy_wh is not None else None)
 
-            # ── 5. Parent config-info (semi-static settings) ──────────
+            # ── 5. Parent config-info ─────────────────────────────────
             parent_cfg = await self.api.get_config_signals(
                 self.dn_id, PARENT_CONFIG_SIGNAL_IDS
             )
@@ -147,7 +131,7 @@ class ChargerCoordinator(DataUpdateCoordinator):
                 "charging_voltage":     charging_voltage,
                 "charging_current":     charging_current,
                 "session_energy":       session_energy,
-                "session_duration_s":   session_duration_str, # Gebruikt voor weergave
+                "session_duration_s":   session_duration_str,
                 "session_start_time":   session_start,
                 "total_energy_kwh":     total_energy_kwh,
                 "max_current":          max_current,
@@ -169,18 +153,8 @@ class ChargerCoordinator(DataUpdateCoordinator):
 
 
 class StationCoordinator(DataUpdateCoordinator):
-    """
-    Polls the solar plant every 5 minutes.
-    """
-
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        api: FusionSolarApi,
-        station_dn_id: int,
-        station_name: str,
-        station_dn: str = "",
-    ) -> None:
+    """Polls the solar plant every 5 minutes."""
+    def __init__(self, hass, api, station_dn_id, station_name, station_dn=""):
         super().__init__(
             hass, _LOGGER,
             name=f"{DOMAIN}_station_{station_dn_id}",
@@ -195,7 +169,6 @@ class StationCoordinator(DataUpdateCoordinator):
         try:
             if not self._station_dn:
                 self._station_dn = await self.api.get_station_dn(self.station_dn_id) or ""
-
             if self._station_dn:
                 kpi = await self.api.get_station_real_kpi(self._station_dn)
                 if kpi:
@@ -207,51 +180,14 @@ class StationCoordinator(DataUpdateCoordinator):
                         "year_energy":       _to_float(kpi.get("yearEnergy")),
                         "daily_self_use":    _to_float(kpi.get("dailySelfUseEnergy")),
                         "daily_use":         _to_float(kpi.get("dailyUseEnergy")),
-                        "daily_on_grid":     None,
-                        "daily_buy":         None,
-                        "battery_capacity":  None,
-                        "battery_power":     None,
-                        "plant_status":      None,
-                        "installed_capacity": None,
-                        "eq_power_hours":    None,
                     }
-
-            stations = await self.api.get_station_list()
-            station: dict = {}
-            for s in stations:
-                if int(s.get("dnId", -1)) == self.station_dn_id:
-                    station = s
-                    break
-
-            if not station:
-                return {}
-
-            return {
-                "current_power":      _to_float(station.get("currentPower")),
-                "daily_energy":       _to_float(station.get("dailyEnergy")),
-                "daily_on_grid":      _to_float(station.get("dailyOnGridEnergy")),
-                "daily_buy":          _to_float(station.get("dailyBuyEnergy")),
-                "daily_use":          _to_float(station.get("dailyUseEnergy")),
-                "daily_self_use":     _to_float(station.get("dailySelfUseEnergy")),
-                "month_energy":       _to_float(station.get("monthEnergy")),
-                "year_energy":        _to_float(station.get("yearEnergy")),
-                "cumulative_energy":  _to_float(station.get("cumulativeEnergy")),
-                "battery_capacity":   _to_float(station.get("batteryCapacity")),
-                "battery_power":      _to_float(station.get("energyStoragePower")),
-                "plant_status":       station.get("plantStatus"),
-                "installed_capacity": _to_float(station.get("installedCapacity")),
-                "eq_power_hours":     _to_float(station.get("eqPowerHours")),
-            }
-
-        except FusionSolarAuthError as exc:
-            raise UpdateFailed(f"Auth error: {exc}") from exc
-        except FusionSolarApiError as exc:
+            return {}
+        except Exception as exc:
             raise UpdateFailed(f"API error: {exc}") from exc
 
 
 class DiagnosticsCoordinator(DataUpdateCoordinator):
-    """Fires at startup to log query-process-data response during charging."""
-
+    """Fires at startup to log query-process-data response."""
     def __init__(self, hass, api, dn_id, gun_dn_id, device_name):
         super().__init__(
             hass, _LOGGER,
@@ -266,39 +202,25 @@ class DiagnosticsCoordinator(DataUpdateCoordinator):
     async def _async_update_data(self) -> dict:
         try:
             cs = await self.api.get_charger_status(self.dn_id)
-            _LOGGER.warning("[DIAG] charge-status: %s", cs)
-
             proc = await self.api.get_charging_process_data(self.dn_id)
-            _LOGGER.warning("[DIAG] query-process-data: %s", proc)
-
-        except Exception as exc:
-            _LOGGER.warning("[DIAG] Error: %s", exc)
+            _LOGGER.warning("[DIAG] status: %s, proc: %s", cs, proc)
+        except Exception:
+            pass
         return {}
 
 
-FusionSolarCoordinator = ChargerCoordinator
-
-
 def _to_float(value: object) -> float | None:
-    if value is None or value == "" or value == "--":
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
+    if value in (None, "", "--"): return None
+    try: return float(value)
+    except: return None
 
 def _to_float_from_dict(data: object) -> float | None:
-    """Helper to extract 'value' from nested dicts like {'value': 4.891, 'unit': 'kWh'}"""
-    if isinstance(data, dict):
-        return _to_float(data.get("value"))
+    if isinstance(data, dict): return _to_float(data.get("value"))
     return _to_float(data)
 
 def _to_int(value: object, default: int = 0) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
-
+    try: return int(value)
+    except: return default
 
 def _sig_float(signals: dict, signal_id: int) -> float | None:
     s = signals.get(signal_id, {})
