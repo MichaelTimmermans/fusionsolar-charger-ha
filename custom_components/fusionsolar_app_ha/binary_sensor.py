@@ -1,8 +1,5 @@
 """
 Binary sensor platform for FusionSolar App HA.
-
-Charger:  connectivity, is_charging, vehicle_connected
-Station:  connectivity
 """
 from __future__ import annotations
 
@@ -18,15 +15,6 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import ChargerCoordinator, StationCoordinator
-
-# Signal 2101519 status values that mean "actively charging"
-_CHARGING_STATES = {"3", "11"}   # "3"=Charging, "11"=PV Power Charging
-
-# Signal 2101519 status values that mean a vehicle is present
-_CONNECTED_STATES = {"1", "2", "3", "4", "6", "8", "9", "10", "11"}
-# Standby, Timed wait, Charging, Complete, Orderly wait, Starting, Alarm, PV wait, PV charging
-# Excludes "0" (No car connected), "5" (Faulted), "7" (Upgrading)
-
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -47,11 +35,6 @@ async def async_setup_entry(
 
     async_add_entities(entities)
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _charger_device_info(coordinator: ChargerCoordinator) -> DeviceInfo:
     return DeviceInfo(
         identifiers={(DOMAIN, f"charger_{coordinator.dn_id}")},
@@ -59,21 +42,6 @@ def _charger_device_info(coordinator: ChargerCoordinator) -> DeviceInfo:
         manufacturer="Huawei",
         model="FusionSolar EV Charger",
     )
-
-
-def _signal_status_value(coordinator: ChargerCoordinator) -> str:
-    """Return the raw signal 2101519 value string (e.g. '0', '3', '11')."""
-    if not coordinator.data:
-        return ""
-    # signal_status holds the human label — we need the raw numeric key
-    # We store status_code from charge-status as fallback, but for signal-based
-    # detection we check the label directly against known charging labels
-    return coordinator.data.get("_signal_status_raw", "")
-
-
-# ---------------------------------------------------------------------------
-# Charger binary sensors
-# ---------------------------------------------------------------------------
 
 class ChargerConnectivitySensor(CoordinatorEntity[ChargerCoordinator], BinarySensorEntity):
     _attr_has_entity_name = True
@@ -92,13 +60,7 @@ class ChargerConnectivitySensor(CoordinatorEntity[ChargerCoordinator], BinarySen
     def is_on(self) -> bool:
         return self.coordinator.last_update_success
 
-
 class IsChargingSensor(CoordinatorEntity[ChargerCoordinator], BinarySensorEntity):
-    """
-    True when the charger is actively delivering power.
-    Uses signal_status label (from signal 2101519) for richest detection,
-    with charge_power > 0 as a secondary confirmation.
-    """
     _attr_has_entity_name = True
     _attr_name = "Charging"
     _attr_device_class = BinarySensorDeviceClass.BATTERY_CHARGING
@@ -117,24 +79,18 @@ class IsChargingSensor(CoordinatorEntity[ChargerCoordinator], BinarySensorEntity
         if not self.coordinator.data:
             return None
         status = self.coordinator.data.get("signal_status", "")
-        # Primary: check known charging status labels
+        # Check op beide laad-statussen om "Charging" aan te zetten
         if status in ("Charging", "PV power charging"):
             return True
         if status in ("No car connected", "Charging complete", "Standby", "Faulted"):
             return False
-        # Secondary fallback: charge_power > 0
-        power = self.coordinator.data.get("charge_power")
+        
+        power = self.coordinator.data.get("charging_power")
         if power is not None:
             return float(power) > 0
-        # Fallback to numeric status_code: 2 = Charging
         return self.coordinator.data.get("status_code") == 2
 
-
 class VehicleConnectedSensor(CoordinatorEntity[ChargerCoordinator], BinarySensorEntity):
-    """
-    True when a vehicle is physically plugged in.
-    False only when status is "No car connected".
-    """
     _attr_has_entity_name = True
     _attr_name = "Vehicle connected"
     _attr_device_class = BinarySensorDeviceClass.PLUG
@@ -156,18 +112,9 @@ class VehicleConnectedSensor(CoordinatorEntity[ChargerCoordinator], BinarySensor
         if status == "No car connected":
             return False
         if status:
-            # Any other known status means a car is present
             return True
-        # Fallback to numeric status_code: 1-5 = vehicle present
         code = self.coordinator.data.get("status_code", -1)
-        if code == -1:
-            return None
         return 1 <= int(code) <= 5
-
-
-# ---------------------------------------------------------------------------
-# Station binary sensor
-# ---------------------------------------------------------------------------
 
 class StationConnectivitySensor(CoordinatorEntity[StationCoordinator], BinarySensorEntity):
     _attr_has_entity_name = True

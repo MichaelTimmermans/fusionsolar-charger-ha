@@ -5,18 +5,13 @@ import logging
 from dataclasses import dataclass
 
 from homeassistant.components.sensor import (
-    SensorDeviceClass,
-    SensorEntity,
-    SensorEntityDescription,
-    SensorStateClass,
+    SensorDeviceClass, SensorEntity, SensorEntityDescription, SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
-    UnitOfElectricCurrent,
-    UnitOfEnergy,
-    UnitOfPower,
-    UnitOfTime,
+    UnitOfElectricCurrent, UnitOfElectricPotential,
+    UnitOfEnergy, UnitOfPower, UnitOfTime,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
@@ -37,54 +32,59 @@ class FusionSensorDescription(SensorEntityDescription):
 CHARGER_SENSORS: tuple[FusionSensorDescription, ...] = (
     # ── Status ────────────────────────────────────────────────────────
     FusionSensorDescription(
-        key="signal_status",
-        data_key="signal_status",
-        name="Status",
-        icon="mdi:ev-station",
+        key="signal_status", data_key="signal_status",
+        name="Status", icon="mdi:ev-station",
     ),
-    # ── Live charging ─────────────────────────────────────────────────
+    # ── Live session (from query-process-data) ────────────────────────
     FusionSensorDescription(
-        key="charge_power",
-        data_key="charge_power",
+        key="charging_power", data_key="charging_power",
         name="Charging power",
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=UnitOfPower.WATT,
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
         icon="mdi:flash",
     ),
     FusionSensorDescription(
-        key="charging_duration",
-        data_key="charging_duration",
-        name="Charging duration",
+        key="charging_voltage", data_key="charging_voltage",
+        name="Charging voltage",
+        device_class=SensorDeviceClass.VOLTAGE,
         state_class=SensorStateClass.MEASUREMENT,
-        native_unit_of_measurement=UnitOfTime.MINUTES,
-        icon="mdi:timer",
+        native_unit_of_measurement=UnitOfElectricPotential.VOLT,
+        icon="mdi:sine-wave",
     ),
     FusionSensorDescription(
-        key="session_target_energy",
-        data_key="session_target_energy",
-        name="Session target energy",
-        device_class=SensorDeviceClass.ENERGY,
+        key="charging_current", data_key="charging_current",
+        name="Charging current",
+        device_class=SensorDeviceClass.CURRENT,
         state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement=UnitOfElectricCurrent.AMPERE,
+        icon="mdi:current-ac",
+    ),
+    FusionSensorDescription(
+        key="session_energy", data_key="session_energy",
+        name="Session energy",
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         icon="mdi:battery-charging",
     ),
-    # ── Lifetime totals ───────────────────────────────────────────────
     FusionSensorDescription(
-        key="total_energy_kwh",
-        data_key="total_energy_kwh",
+        key="session_duration_s", data_key="session_duration_s",
+        name="Charging duration",
+        icon="mdi:timer",
+    ),
+    # ── Lifetime total ────────────────────────────────────────────────
+    FusionSensorDescription(
+        key="total_energy_kwh", data_key="total_energy_kwh",
         name="Total energy delivered",
         device_class=SensorDeviceClass.ENERGY,
         state_class=SensorStateClass.TOTAL_INCREASING,
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         icon="mdi:counter",
-        # Source: signal 10036 (Wh) ÷ 1000 = kWh
-        # Confirmed value 8901 Wh = 8.901 kWh lifetime
     ),
-    # ── Settings (from gun dnId config-info) ──────────────────────────
+    # ── Gun settings ──────────────────────────────────────────────────
     FusionSensorDescription(
-        key="max_current",
-        data_key="max_current",
+        key="max_current", data_key="max_current",
         name="Max charging current",
         device_class=SensorDeviceClass.CURRENT,
         state_class=SensorStateClass.MEASUREMENT,
@@ -92,14 +92,11 @@ CHARGER_SENSORS: tuple[FusionSensorDescription, ...] = (
         icon="mdi:current-ac",
     ),
     FusionSensorDescription(
-        key="working_mode",
-        data_key="working_mode",
-        name="Working mode",
-        icon="mdi:solar-power",
+        key="working_mode", data_key="working_mode",
+        name="Working mode", icon="mdi:solar-power",
     ),
     FusionSensorDescription(
-        key="max_grid_power",
-        data_key="max_grid_power",
+        key="max_grid_power", data_key="max_grid_power",
         name="Max power from grid",
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
@@ -107,8 +104,7 @@ CHARGER_SENSORS: tuple[FusionSensorDescription, ...] = (
         icon="mdi:transmission-tower-import",
     ),
     FusionSensorDescription(
-        key="surplus_power_start",
-        data_key="surplus_power_start",
+        key="surplus_power_start", data_key="surplus_power_start",
         name="PV surplus to start charging",
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
@@ -116,21 +112,16 @@ CHARGER_SENSORS: tuple[FusionSensorDescription, ...] = (
         icon="mdi:solar-power-variant",
     ),
     FusionSensorDescription(
-        key="phase_switch",
-        data_key="phase_switch",
-        name="Phase switch",
-        icon="mdi:lightning-bolt-circle",
+        key="phase_switch", data_key="phase_switch",
+        name="Phase switch", icon="mdi:lightning-bolt-circle",
     ),
     FusionSensorDescription(
-        key="locking_mode",
-        data_key="locking_mode",
-        name="Connector locking mode",
-        icon="mdi:lock",
+        key="locking_mode", data_key="locking_mode",
+        name="Connector locking mode", icon="mdi:lock",
     ),
-    # ── Settings (from parent dnId config-info) ───────────────────────
+    # ── Parent settings ───────────────────────────────────────────────
     FusionSensorDescription(
-        key="max_power_limit",
-        data_key="max_power_limit",
+        key="max_power_limit", data_key="max_power_limit",
         name="Dynamic charging power limit",
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
@@ -138,20 +129,15 @@ CHARGER_SENSORS: tuple[FusionSensorDescription, ...] = (
         icon="mdi:lightning-bolt-circle",
     ),
     FusionSensorDescription(
-        key="networking_mode",
-        data_key="networking_mode",
-        name="Networking mode",
-        icon="mdi:network",
+        key="networking_mode", data_key="networking_mode",
+        name="Networking mode", icon="mdi:network",
     ),
     FusionSensorDescription(
-        key="charger_alias",
-        data_key="charger_alias",
-        name="Charger alias",
-        icon="mdi:tag",
+        key="charger_alias", data_key="charger_alias",
+        name="Charger alias", icon="mdi:tag",
     ),
     FusionSensorDescription(
-        key="wifi_signal",
-        data_key="wifi_signal",
+        key="wifi_signal", data_key="wifi_signal",
         name="WiFi signal",
         device_class=SensorDeviceClass.SIGNAL_STRENGTH,
         state_class=SensorStateClass.MEASUREMENT,
@@ -159,7 +145,6 @@ CHARGER_SENSORS: tuple[FusionSensorDescription, ...] = (
         icon="mdi:wifi",
     ),
 )
-
 
 STATION_SENSORS: tuple[FusionSensorDescription, ...] = (
     FusionSensorDescription(
@@ -218,8 +203,8 @@ STATION_SENSORS: tuple[FusionSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR, icon="mdi:battery",
     ),
     FusionSensorDescription(
-        key="plant_status", data_key="plant_status", name="Plant status",
-        icon="mdi:information-outline",
+        key="plant_status", data_key="plant_status",
+        name="Plant status", icon="mdi:information-outline",
     ),
     FusionSensorDescription(
         key="installed_capacity", data_key="installed_capacity", name="Installed capacity",
@@ -227,30 +212,28 @@ STATION_SENSORS: tuple[FusionSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfPower.KILO_WATT, icon="mdi:solar-panel-large",
     ),
     FusionSensorDescription(
-        key="eq_power_hours", data_key="eq_power_hours", name="Equivalent power hours today",
-        state_class=SensorStateClass.MEASUREMENT, native_unit_of_measurement="h",
-        icon="mdi:clock-outline",
+        key="eq_power_hours", data_key="eq_power_hours",
+        name="Equivalent power hours today",
+        state_class=SensorStateClass.MEASUREMENT,
+        native_unit_of_measurement="h", icon="mdi:clock-outline",
     ),
 )
 
 
 async def async_setup_entry(
-    hass: HomeAssistant,
-    entry: ConfigEntry,
+    hass: HomeAssistant, entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     data = hass.data[DOMAIN][entry.entry_id]
-    charger_coordinator: ChargerCoordinator = data["charger"]
-    station_coordinator: StationCoordinator | None = data["station"]
+    charger: ChargerCoordinator = data["charger"]
+    station: StationCoordinator | None = data["station"]
 
     entities: list[SensorEntity] = [
-        FusionSensor(charger_coordinator, desc, is_station=False)
-        for desc in CHARGER_SENSORS
+        FusionSensor(charger, desc, is_station=False) for desc in CHARGER_SENSORS
     ]
-    if station_coordinator is not None:
+    if station is not None:
         entities.extend(
-            FusionSensor(station_coordinator, desc, is_station=True)
-            for desc in STATION_SENSORS
+            FusionSensor(station, desc, is_station=True) for desc in STATION_SENSORS
         )
     async_add_entities(entities)
 
