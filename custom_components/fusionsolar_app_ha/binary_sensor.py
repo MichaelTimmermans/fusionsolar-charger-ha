@@ -1,11 +1,8 @@
-"""
-Binary sensor platform for FusionSolar App HA.
-"""
+"""Binary sensor platform for FusionSolar App HA."""
 from __future__ import annotations
 
 from homeassistant.components.binary_sensor import (
-    BinarySensorDeviceClass,
-    BinarySensorEntity,
+    BinarySensorDeviceClass, BinarySensorEntity,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -14,7 +11,20 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
-from .coordinator import ChargerCoordinator, StationCoordinator
+from .coordinator import (
+    BatteryCoordinator,
+    ChargerCoordinator,
+    InverterCoordinator,
+    StationCoordinator,
+)
+
+_CHARGING_STATUSES = {"Charging", "PV power charging", "Starting charging"}
+_CONNECTED_STATUSES = {
+    "Standby", "Timed charging — waiting", "Charging",
+    "Charging complete", "Orderly charging — waiting",
+    "Starting charging", "Alarm", "PV power — waiting", "PV power charging",
+}
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -22,28 +32,34 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     data = hass.data[DOMAIN][entry.entry_id]
-    charger_coordinator: ChargerCoordinator = data["charger"]
-    station_coordinator: StationCoordinator | None = data["station"]
+    entities: list[BinarySensorEntity] = []
 
-    entities: list[BinarySensorEntity] = [
-        ChargerConnectivitySensor(charger_coordinator),
-        IsChargingSensor(charger_coordinator),
-        VehicleConnectedSensor(charger_coordinator),
+    charger = data["charger"]
+    entities += [
+        ChargerConnectivity(charger),
+        IsCharging(charger),
+        VehicleConnected(charger),
     ]
-    if station_coordinator is not None:
-        entities.append(StationConnectivitySensor(station_coordinator))
+
+    for inv in data.get("inverters", []):
+        entities.append(InverterConnectivity(inv))
+
+    for bat in data.get("batteries", []):
+        entities.append(BatteryConnectivity(bat))
+        entities.append(BatteryCharging(bat))
+
+    station = data.get("station")
+    if station:
+        entities.append(StationConnectivity(station))
 
     async_add_entities(entities)
 
-def _charger_device_info(coordinator: ChargerCoordinator) -> DeviceInfo:
-    return DeviceInfo(
-        identifiers={(DOMAIN, f"charger_{coordinator.dn_id}")},
-        name=coordinator.device_name,
-        manufacturer="Huawei",
-        model="FusionSolar EV Charger",
-    )
 
-class ChargerConnectivitySensor(CoordinatorEntity[ChargerCoordinator], BinarySensorEntity):
+# ---------------------------------------------------------------------------
+# Charger binary sensors
+# ---------------------------------------------------------------------------
+
+class ChargerConnectivity(CoordinatorEntity[ChargerCoordinator], BinarySensorEntity):
     _attr_has_entity_name = True
     _attr_name = "Connectivity"
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
@@ -54,15 +70,21 @@ class ChargerConnectivitySensor(CoordinatorEntity[ChargerCoordinator], BinarySen
 
     @property
     def device_info(self) -> DeviceInfo:
-        return _charger_device_info(self.coordinator)
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"charger_{self.coordinator.dn_id}")},
+            name=self.coordinator.device_name,
+            manufacturer="Huawei",
+            model="FusionSolar EV Charger",
+        )
 
     @property
     def is_on(self) -> bool:
         return self.coordinator.last_update_success
 
-class IsChargingSensor(CoordinatorEntity[ChargerCoordinator], BinarySensorEntity):
+
+class IsCharging(CoordinatorEntity[ChargerCoordinator], BinarySensorEntity):
     _attr_has_entity_name = True
-    _attr_name = "Charging"
+    _attr_name = "Charging active"
     _attr_device_class = BinarySensorDeviceClass.BATTERY_CHARGING
     _attr_icon = "mdi:ev-station"
 
@@ -72,25 +94,30 @@ class IsChargingSensor(CoordinatorEntity[ChargerCoordinator], BinarySensorEntity
 
     @property
     def device_info(self) -> DeviceInfo:
-        return _charger_device_info(self.coordinator)
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"charger_{self.coordinator.dn_id}")},
+            name=self.coordinator.device_name,
+            manufacturer="Huawei",
+            model="FusionSolar EV Charger",
+        )
 
     @property
     def is_on(self) -> bool | None:
         if not self.coordinator.data:
             return None
         status = self.coordinator.data.get("signal_status", "")
-        # Check op beide laad-statussen om "Charging" aan te zetten
-        if status in ("Charging", "PV power charging"):
+        if status in _CHARGING_STATUSES:
             return True
-        if status in ("No car connected", "Charging complete", "Standby", "Faulted"):
+        if status:
             return False
-        
+        # Fallback: check power
         power = self.coordinator.data.get("charging_power")
         if power is not None:
             return float(power) > 0
         return self.coordinator.data.get("status_code") == 2
 
-class VehicleConnectedSensor(CoordinatorEntity[ChargerCoordinator], BinarySensorEntity):
+
+class VehicleConnected(CoordinatorEntity[ChargerCoordinator], BinarySensorEntity):
     _attr_has_entity_name = True
     _attr_name = "Vehicle connected"
     _attr_device_class = BinarySensorDeviceClass.PLUG
@@ -102,7 +129,12 @@ class VehicleConnectedSensor(CoordinatorEntity[ChargerCoordinator], BinarySensor
 
     @property
     def device_info(self) -> DeviceInfo:
-        return _charger_device_info(self.coordinator)
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"charger_{self.coordinator.dn_id}")},
+            name=self.coordinator.device_name,
+            manufacturer="Huawei",
+            model="FusionSolar EV Charger",
+        )
 
     @property
     def is_on(self) -> bool | None:
@@ -111,12 +143,103 @@ class VehicleConnectedSensor(CoordinatorEntity[ChargerCoordinator], BinarySensor
         status = self.coordinator.data.get("signal_status", "")
         if status == "No car connected":
             return False
-        if status:
+        if status in _CONNECTED_STATUSES:
             return True
+        if status:
+            return False
         code = self.coordinator.data.get("status_code", -1)
-        return 1 <= int(code) <= 5
+        return 1 <= int(code) <= 5 if code != -1 else None
 
-class StationConnectivitySensor(CoordinatorEntity[StationCoordinator], BinarySensorEntity):
+
+# ---------------------------------------------------------------------------
+# Inverter binary sensors
+# ---------------------------------------------------------------------------
+
+class InverterConnectivity(CoordinatorEntity[InverterCoordinator], BinarySensorEntity):
+    _attr_has_entity_name = True
+    _attr_name = "Connectivity"
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+
+    def __init__(self, coordinator: InverterCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.dn_id}_inverter_connectivity"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"inverter_{self.coordinator.dn_id}")},
+            name=self.coordinator.device_name,
+            manufacturer="Huawei",
+            model="FusionSolar Inverter",
+        )
+
+    @property
+    def is_on(self) -> bool:
+        return self.coordinator.last_update_success
+
+
+# ---------------------------------------------------------------------------
+# Battery binary sensors
+# ---------------------------------------------------------------------------
+
+class BatteryConnectivity(CoordinatorEntity[BatteryCoordinator], BinarySensorEntity):
+    _attr_has_entity_name = True
+    _attr_name = "Connectivity"
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+
+    def __init__(self, coordinator: BatteryCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.dn_id}_battery_connectivity"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"battery_{self.coordinator.dn_id}")},
+            name=self.coordinator.device_name,
+            manufacturer="Huawei",
+            model="LUNA2000 Battery",
+        )
+
+    @property
+    def is_on(self) -> bool:
+        return self.coordinator.last_update_success
+
+
+class BatteryCharging(CoordinatorEntity[BatteryCoordinator], BinarySensorEntity):
+    """True when battery power is positive (charging from PV/grid)."""
+    _attr_has_entity_name = True
+    _attr_name = "Charging"
+    _attr_device_class = BinarySensorDeviceClass.BATTERY_CHARGING
+    _attr_icon = "mdi:battery-charging"
+
+    def __init__(self, coordinator: BatteryCoordinator) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.dn_id}_battery_charging"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"battery_{self.coordinator.dn_id}")},
+            name=self.coordinator.device_name,
+            manufacturer="Huawei",
+            model="LUNA2000 Battery",
+        )
+
+    @property
+    def is_on(self) -> bool | None:
+        if not self.coordinator.data:
+            return None
+        power = self.coordinator.data.get("battery_power")
+        if power is None:
+            return None
+        return float(power) > 0
+
+
+# ---------------------------------------------------------------------------
+# Station binary sensor
+# ---------------------------------------------------------------------------
+
+class StationConnectivity(CoordinatorEntity[StationCoordinator], BinarySensorEntity):
     _attr_has_entity_name = True
     _attr_name = "Connectivity"
     _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY

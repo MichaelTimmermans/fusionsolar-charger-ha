@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "FusionSolar App",
-        "description": "Enter your FusionSolar (Huawei) account credentials. The regional server and devices will be detected automatically.",
+        "description": "Enter your FusionSolar (Huawei) credentials. All devices (inverter, battery, meter, charger) will be discovered automatically.",
         "data": {
           "username": "Username (email)",
           "password": "Password",
@@ -11,8 +11,8 @@
         }
       },
       "pick_device": {
-        "title": "Select charger",
-        "description": "Multiple EV chargers were found on your account. Pick the one to monitor.",
+        "title": "Select EV charger",
+        "description": "Multiple EV chargers found. Pick the primary one.",
         "data": {
           "device_dn_id": "Charger"
         }
@@ -20,11 +20,11 @@
     },
     "error": {
       "invalid_auth": "Invalid username or password.",
-      "cannot_connect": "Could not connect to FusionSolar. Check your internet connection.",
-      "no_devices": "No EV charger devices were found on this account and server combination."
+      "cannot_connect": "Cannot connect to FusionSolar. Check your internet connection.",
+      "no_devices": "No EV charger found on this account."
     },
     "abort": {
-      "already_configured": "This charger is already configured."
+      "already_configured": "This account is already configured."
     }
   }
 }
